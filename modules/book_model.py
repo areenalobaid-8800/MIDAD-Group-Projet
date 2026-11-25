@@ -1,4 +1,3 @@
-
 from mysql.connector import Error
 from database.connection import create_connection
 
@@ -121,6 +120,7 @@ def search_books(search_text):
                 Books.Description,
                 Books.Total_Copies,
                 Books.Available_Copies,
+                Books.Cover_Image,
                 Categories.Category_Name
             FROM Books
             LEFT JOIN Categories
@@ -138,6 +138,47 @@ def search_books(search_text):
 
     except Error as e:
         print("Book Search Error:", e)
+        return []
+
+    finally:
+        cursor.close()
+        connection.close()
+
+
+# ================= GET ALL BOOKS =================
+
+def get_all_books():
+
+    connection = create_connection()
+
+    if connection is None:
+        return []
+
+    cursor = connection.cursor(dictionary=True)
+
+    try:
+        query = """
+            SELECT
+                Books.Book_ID,
+                Books.Title,
+                Books.Author,
+                Books.Description,
+                Books.Total_Copies,
+                Books.Available_Copies,
+                Books.Cover_Image,
+                Categories.Category_Name
+            FROM Books
+            LEFT JOIN Categories
+                ON Books.Category_ID = Categories.Category_ID
+            ORDER BY Books.Title ASC
+        """
+
+        cursor.execute(query)
+
+        return cursor.fetchall()
+
+    except Error as e:
+        print("Get All Books Error:", e)
         return []
 
     finally:
@@ -171,8 +212,6 @@ def can_join_waiting_list(user_id, book_id):
         if book is None:
             return "not_found"
 
-        # A student cannot join the waiting list
-        # if they already have this book borrowed.
         cursor.execute("""
             SELECT Borrowing_ID
             FROM Borrowings
@@ -185,7 +224,6 @@ def can_join_waiting_list(user_id, book_id):
         if cursor.fetchone():
             return "borrowed"
 
-        # Check existing active waiting list requests.
         cursor.execute("""
             SELECT Waiting_ID
             FROM Waiting_List
@@ -198,7 +236,6 @@ def can_join_waiting_list(user_id, book_id):
         if cursor.fetchone():
             return "exists"
 
-        # If copies are available, the student can borrow directly.
         if book[0] > 0:
             return "available"
 
@@ -243,7 +280,7 @@ def get_most_borrowed_books():
             ORDER BY
                 Borrowing_Count DESC,
                 Books.Title ASC
-            LIMIT 3
+            LIMIT 5
         """
 
         cursor.execute(query)
@@ -565,7 +602,6 @@ def join_waiting_list(user_id, book_id):
     try:
         _process_expired_reservations(cursor)
 
-        # Lock the book row before checking its status.
         cursor.execute("""
             SELECT Available_Copies
             FROM Books
@@ -579,7 +615,6 @@ def join_waiting_list(user_id, book_id):
             connection.rollback()
             return "not_found"
 
-        # Prevent students from joining while borrowing the same book.
         cursor.execute("""
             SELECT Borrowing_ID
             FROM Borrowings
@@ -594,7 +629,6 @@ def join_waiting_list(user_id, book_id):
             connection.rollback()
             return "borrowed"
 
-        # Check whether the student already has an active request.
         cursor.execute("""
             SELECT Waiting_ID
             FROM Waiting_List
@@ -609,7 +643,6 @@ def join_waiting_list(user_id, book_id):
             connection.rollback()
             return "exists"
 
-        # A waiting list is only allowed when no copies are available.
         if book[0] > 0:
             connection.rollback()
             return "available"
@@ -746,7 +779,6 @@ def leave_waiting_list(user_id, waiting_id):
             connection.rollback()
             return "not_found"
 
-        # Release the reserved copy if the student cancels after promotion.
         if status == "Ready for Pickup":
 
             cursor.execute("""
@@ -803,7 +835,6 @@ def collect_waiting_book(user_id, waiting_id):
 
         book_id = request[0]
 
-        # Prevent collecting the book if the student already has it.
         cursor.execute("""
             SELECT Borrowing_ID
             FROM Borrowings
@@ -855,6 +886,73 @@ def collect_waiting_book(user_id, waiting_id):
         connection.rollback()
         print("Collect Waiting Book Error:", e)
         return "error"
+
+    finally:
+        cursor.close()
+        connection.close()
+
+
+# ================= MYSTERY BORROW =================
+
+def get_book_categories():
+
+    connection = create_connection()
+
+    if connection is None:
+        return []
+
+    cursor = connection.cursor(dictionary=True)
+
+    try:
+        cursor.execute("""
+            SELECT Category_ID, Category_Name
+            FROM Categories
+            ORDER BY Category_Name ASC
+        """)
+
+        return cursor.fetchall()
+
+    except Error as e:
+        print("Get Book Categories Error:", e)
+        return []
+
+    finally:
+        cursor.close()
+        connection.close()
+
+
+def get_random_book_by_category(category_id):
+
+    connection = create_connection()
+
+    if connection is None:
+        return None
+
+    cursor = connection.cursor(dictionary=True)
+
+    try:
+        cursor.execute("""
+            SELECT
+                Books.Book_ID,
+                Books.Title,
+                Books.Author,
+                Books.Description,
+                Books.Available_Copies,
+                Categories.Category_Name
+            FROM Books
+            INNER JOIN Categories
+                ON Books.Category_ID = Categories.Category_ID
+            WHERE Books.Category_ID = %s
+              AND Books.Available_Copies > 0
+            ORDER BY RAND()
+            LIMIT 1
+        """, (category_id,))
+
+        return cursor.fetchone()
+
+    except Error as e:
+        print("Mystery Borrow Error:", e)
+        return None
 
     finally:
         cursor.close()

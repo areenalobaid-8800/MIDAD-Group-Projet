@@ -1,9 +1,9 @@
-
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 
 from modules.book_model import (
     search_books,
+    get_all_books,
     get_most_borrowed_books,
     add_to_favorites,
     get_student_favorites,
@@ -15,7 +15,9 @@ from modules.book_model import (
     get_student_waiting_list,
     leave_waiting_list,
     collect_waiting_book,
-    can_join_waiting_list
+    can_join_waiting_list,
+    get_book_categories,
+    get_random_book_by_category
 )
 
 
@@ -63,29 +65,15 @@ def open_student_dashboard(user):
         fg="#B8C7D9"
     ).pack(pady=(0, 40))
 
-    def show_message(page_name):
-
-        messagebox.showinfo(
-            page_name,
-            f"{page_name} page is coming soon."
-        )
-
-    # ================= STORE THE PAGES =================
+    # ================= PAGE VARIABLES =================
 
     borrowings_page = None
     return_page = None
     favorites_page = None
     waiting_page = None
-
-    navigation = [
-        ("⌂", "Dashboard"),
-        ("▤", "My Borrowings"),
-        ("↩", "Return Books"),
-        ("☷", "Waiting List"),
-        ("♡", "My Favorites"),
-        ("✦", "You May Like"),
-        ("?", "Mystery Borrow")
-    ]
+    you_may_like_page = None
+    mystery_page = None
+    explore_page = None
 
     # ================= MAIN CONTENT =================
 
@@ -205,6 +193,96 @@ def open_student_dashboard(user):
     results_inner_frame.bind("<Configure>", update_scroll_region)
     results_canvas.bind("<Configure>", update_inner_width)
 
+    # ================= PAGE CONTENT =================
+
+    content = tk.Frame(main_content, bg=BACKGROUND)
+
+    content.pack(
+        fill="both",
+        expand=True,
+        padx=35,
+        pady=25
+    )
+
+    # ================= SCROLLABLE PAGE HELPER =================
+
+    def create_scrollable_page(parent):
+
+        canvas = tk.Canvas(
+            parent,
+            bg=BACKGROUND,
+            highlightthickness=0
+        )
+
+        scrollbar = tk.Scrollbar(
+            parent,
+            orient="vertical",
+            command=canvas.yview
+        )
+
+        inner_frame = tk.Frame(canvas, bg=BACKGROUND)
+
+        window_id = canvas.create_window(
+            (0, 0),
+            window=inner_frame,
+            anchor="nw"
+        )
+
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        def update_scroll(event=None):
+
+            canvas.configure(
+                scrollregion=canvas.bbox("all")
+            )
+
+        def update_width(event):
+
+            canvas.itemconfig(
+                window_id,
+                width=event.width
+            )
+
+        inner_frame.bind("<Configure>", update_scroll)
+        canvas.bind("<Configure>", update_width)
+
+        return inner_frame
+
+    # ================= CLOSE CURRENT PAGE =================
+
+    def close_other_pages():
+
+        nonlocal borrowings_page, return_page
+        nonlocal favorites_page, waiting_page
+        nonlocal you_may_like_page, mystery_page, explore_page
+
+        suggestions_frame.place_forget()
+
+        for page in (
+            borrowings_page,
+            return_page,
+            favorites_page,
+            waiting_page,
+            you_may_like_page,
+            mystery_page,
+            explore_page
+        ):
+            if page is not None:
+                page.destroy()
+
+        borrowings_page = None
+        return_page = None
+        favorites_page = None
+        waiting_page = None
+        you_may_like_page = None
+        mystery_page = None
+        explore_page = None
+
+        content.pack_forget()
+
     # ================= BOOK ACTIONS =================
 
     def handle_add_favorite(book):
@@ -277,8 +355,7 @@ def open_student_dashboard(user):
 
             messagebox.showerror(
                 "Error",
-                "Could not remove this book from your favorites. "
-                "Please try again."
+                "Could not remove this book from your favorites."
             )
 
     # ================= BORROW BOOK =================
@@ -318,6 +395,15 @@ def open_student_dashboard(user):
             )
 
             search_while_typing()
+
+            if explore_page is not None:
+                show_explore_books()
+
+            elif you_may_like_page is not None:
+                show_you_may_like()
+
+            elif mystery_page is not None:
+                show_mystery_borrow()
 
         elif borrow_result == "unavailable":
 
@@ -376,15 +462,13 @@ def open_student_dashboard(user):
 
             messagebox.showerror(
                 "Return Error",
-                "Something went wrong while returning the book. "
-                "Please try again."
+                "Something went wrong while returning the book."
             )
 
     # ================= WAITING LIST ACTIONS =================
 
     def handle_join_waiting(book):
 
-        # Check whether the student already has this book.
         permission = can_join_waiting_list(
             user["User_ID"],
             book["Book_ID"]
@@ -434,7 +518,6 @@ def open_student_dashboard(user):
             )
             return
 
-        # Only eligible students can reach this point.
         result = join_waiting_list(
             user["User_ID"],
             book["Book_ID"]
@@ -452,6 +535,9 @@ def open_student_dashboard(user):
 
             if waiting_page is not None:
                 show_waiting_list()
+
+            elif explore_page is not None:
+                show_explore_books()
 
         elif result == "borrowed":
 
@@ -571,6 +657,15 @@ def open_student_dashboard(user):
 
             show_waiting_list()
 
+        elif result == "already_borrowed":
+
+            messagebox.showwarning(
+                "Collection Unavailable",
+                "You already have this book borrowed."
+            )
+
+            show_waiting_list()
+
         else:
 
             messagebox.showerror(
@@ -578,7 +673,185 @@ def open_student_dashboard(user):
                 "Could not collect the book. Please try again."
             )
 
-    # ================= DISPLAY BOOK CARDS =================
+    # ================= BOOK CARD HELPER =================
+
+    def create_book_card(parent, book, show_actions=True):
+
+        book_card = tk.Frame(
+            parent,
+            bg=WHITE,
+            highlightbackground=BORDER,
+            highlightthickness=1,
+            padx=20,
+            pady=18
+        )
+
+        book_card.pack(fill="x", pady=7)
+
+        info_frame = tk.Frame(book_card, bg=WHITE)
+        info_frame.pack(fill="x")
+
+        tk.Label(
+            info_frame,
+            text="▤",
+            font=("Arial", 30),
+            bg=WHITE,
+            fg=TEAL
+        ).pack(side="left", padx=(0, 18))
+
+        details_frame = tk.Frame(info_frame, bg=WHITE)
+        details_frame.pack(side="left", fill="x", expand=True)
+
+        tk.Label(
+            details_frame,
+            text=book["Title"],
+            font=("Arial", 13, "bold"),
+            bg=WHITE,
+            fg=NAVY,
+            wraplength=700,
+            justify="left"
+        ).pack(anchor="w")
+
+        tk.Label(
+            details_frame,
+            text=f"Author: {book['Author']}",
+            font=("Arial", 10),
+            bg=WHITE,
+            fg=GRAY
+        ).pack(anchor="w", pady=(5, 3))
+
+        category = book.get("Category_Name") or "Not specified"
+
+        tk.Label(
+            details_frame,
+            text=f"Category: {category}",
+            font=("Arial", 9),
+            bg=WHITE,
+            fg=GRAY
+        ).pack(anchor="w")
+
+        description = (
+            book.get("Description")
+            or "No description available."
+        )
+
+        tk.Label(
+            details_frame,
+            text=f"Description: {description}",
+            font=("Arial", 9),
+            bg=WHITE,
+            fg=TEXT,
+            wraplength=700,
+            justify="left"
+        ).pack(anchor="w", pady=(7, 5))
+
+        available = book.get("Available_Copies", 0)
+
+        if available > 0:
+            availability_text = f"Available Copies: {available}"
+            availability_color = TEAL
+        else:
+            availability_text = "Currently Unavailable"
+            availability_color = "#C0392B"
+
+        tk.Label(
+            details_frame,
+            text=availability_text,
+            font=("Arial", 9, "bold"),
+            bg=WHITE,
+            fg=availability_color
+        ).pack(anchor="w", pady=(5, 0))
+
+        if not show_actions:
+            return book_card
+
+        buttons_frame = tk.Frame(book_card, bg=WHITE)
+        buttons_frame.pack(fill="x", pady=(15, 0))
+
+        tk.Button(
+            buttons_frame,
+            text="♡  Add to Favorite",
+            font=("Arial", 9, "bold"),
+            bg=LIGHT_TEAL,
+            fg=NAVY,
+            activebackground="#D5ECEA",
+            activeforeground=NAVY,
+            relief="flat",
+            padx=15,
+            pady=8,
+            cursor="hand2",
+            command=lambda b=book: handle_add_favorite(b)
+        ).pack(side="left", padx=(0, 10))
+
+        borrow_button = tk.Button(
+            buttons_frame,
+            text="Borrow",
+            font=("Arial", 9, "bold"),
+            bg=TEAL,
+            fg=WHITE,
+            activebackground="#24736F",
+            activeforeground=WHITE,
+            relief="flat",
+            padx=25,
+            pady=8,
+            cursor="hand2",
+            command=lambda b=book: handle_borrow(b)
+        )
+
+        borrow_button.pack(side="left")
+
+        if available <= 0:
+
+            borrow_button.config(
+                state="disabled",
+                bg=GRAY
+            )
+
+            permission = can_join_waiting_list(
+                user["User_ID"],
+                book["Book_ID"]
+            )
+
+            if permission == "allowed":
+
+                tk.Button(
+                    buttons_frame,
+                    text="☷  Join Waiting List",
+                    font=("Arial", 9, "bold"),
+                    bg=LIGHT_TEAL,
+                    fg=NAVY,
+                    activebackground="#D5ECEA",
+                    activeforeground=NAVY,
+                    relief="flat",
+                    padx=15,
+                    pady=8,
+                    cursor="hand2",
+                    command=lambda b=book: handle_join_waiting(b)
+                ).pack(side="left", padx=(10, 0))
+
+            elif permission == "borrowed":
+
+                tk.Label(
+                    buttons_frame,
+                    text="You already have this book",
+                    font=("Arial", 9, "bold"),
+                    bg=WHITE,
+                    fg="#C0392B"
+                ).pack(side="left", padx=(10, 0))
+
+            elif permission == "exists":
+
+                tk.Label(
+                    buttons_frame,
+                    text="Already in Waiting List",
+                    font=("Arial", 9, "bold"),
+                    bg=WHITE,
+                    fg="#C58A22"
+                ).pack(side="left", padx=(10, 0))
+
+        return book_card
+
+    # ================= SEARCH RESULTS =================
 
     def display_search_results(books):
 
@@ -600,174 +873,7 @@ def open_student_dashboard(user):
             return
 
         for book in books:
-
-            book_card = tk.Frame(
-                results_inner_frame,
-                bg=WHITE,
-                highlightbackground=BORDER,
-                highlightthickness=1,
-                padx=18,
-                pady=15
-            )
-
-            book_card.pack(fill="x", padx=12, pady=7)
-
-            info_frame = tk.Frame(book_card, bg=WHITE)
-            info_frame.pack(fill="x", anchor="w")
-
-            tk.Label(
-                info_frame,
-                text="▤",
-                font=("Arial", 27),
-                bg=WHITE,
-                fg=TEAL
-            ).pack(side="left", padx=(0, 18))
-
-            details_frame = tk.Frame(info_frame, bg=WHITE)
-            details_frame.pack(side="left", fill="x", expand=True)
-
-            tk.Label(
-                details_frame,
-                text=book["Title"],
-                font=("Arial", 12, "bold"),
-                bg=WHITE,
-                fg=NAVY,
-                wraplength=450,
-                justify="left"
-            ).pack(anchor="w")
-
-            tk.Label(
-                details_frame,
-                text=f"Author: {book['Author']}",
-                font=("Arial", 10),
-                bg=WHITE,
-                fg=GRAY
-            ).pack(anchor="w", pady=(5, 3))
-
-            category = book["Category_Name"] or "Not specified"
-
-            tk.Label(
-                details_frame,
-                text=f"Category: {category}",
-                font=("Arial", 9),
-                bg=WHITE,
-                fg=GRAY
-            ).pack(anchor="w")
-
-            description = book.get("Description") or "No description available."
-
-            tk.Label(
-                details_frame,
-                text=f"Description: {description}",
-                font=("Arial", 9),
-                bg=WHITE,
-                fg=TEXT,
-                wraplength=450,
-                justify="left",
-                anchor="w"
-            ).pack(anchor="w", pady=(6, 2))
-
-            available = book["Available_Copies"]
-
-            if available > 0:
-                availability_text = f"Available Copies: {available}"
-                availability_color = TEAL
-            else:
-                availability_text = "Currently Unavailable"
-                availability_color = "#C0392B"
-
-            tk.Label(
-                details_frame,
-                text=availability_text,
-                font=("Arial", 9, "bold"),
-                bg=WHITE,
-                fg=availability_color
-            ).pack(anchor="w", pady=(5, 0))
-
-            buttons_frame = tk.Frame(book_card, bg=WHITE)
-            buttons_frame.pack(fill="x", pady=(15, 0))
-
-            tk.Button(
-                buttons_frame,
-                text="♡  Add to Favorite",
-                font=("Arial", 9, "bold"),
-                bg=LIGHT_TEAL,
-                fg=NAVY,
-                activebackground="#D5ECEA",
-                activeforeground=NAVY,
-                relief="flat",
-                padx=15,
-                pady=8,
-                cursor="hand2",
-                command=lambda b=book: handle_add_favorite(b)
-            ).pack(side="left", padx=(0, 10))
-
-            borrow_button = tk.Button(
-                buttons_frame,
-                text="Borrow",
-                font=("Arial", 9, "bold"),
-                bg=TEAL,
-                fg=WHITE,
-                activebackground="#24736F",
-                activeforeground=WHITE,
-                relief="flat",
-                padx=25,
-                pady=8,
-                cursor="hand2",
-                command=lambda b=book: handle_borrow(b)
-            )
-
-            borrow_button.pack(side="left")
-
-            if available <= 0:
-
-                borrow_button.config(
-                    state="disabled",
-                    bg=GRAY
-                )
-
-                # Check eligibility before displaying Join Waiting List.
-                permission = can_join_waiting_list(
-                    user["User_ID"],
-                    book["Book_ID"]
-                )
-
-                if permission == "allowed":
-
-                    tk.Button(
-                        buttons_frame,
-                        text="☷  Join Waiting List",
-                        font=("Arial", 9, "bold"),
-                        bg=LIGHT_TEAL,
-                        fg=NAVY,
-                        activebackground="#D5ECEA",
-                        activeforeground=NAVY,
-                        relief="flat",
-                        padx=15,
-                        pady=8,
-                        cursor="hand2",
-                        command=lambda b=book: handle_join_waiting(b)
-                    ).pack(side="left", padx=(10, 0))
-
-                elif permission == "borrowed":
-
-                    tk.Label(
-                        buttons_frame,
-                        text="You already have this book",
-                        font=("Arial", 9, "bold"),
-                        bg=WHITE,
-                        fg="#C0392B"
-                    ).pack(side="left", padx=(10, 0))
-
-                elif permission == "exists":
-
-                    tk.Label(
-                        buttons_frame,
-                        text="Already in Waiting List",
-                        font=("Arial", 9, "bold"),
-                        bg=WHITE,
-                        fg="#C58A22"
-                    ).pack(side="left", padx=(10, 0))
+            create_book_card(results_inner_frame, book)
 
     # ================= SEARCH WHILE TYPING =================
 
@@ -804,65 +910,114 @@ def open_student_dashboard(user):
         fg=NAVY
     ).place(relx=0.97, rely=0.5, anchor="e")
 
-    # ================= PAGE CONTENT =================
+    # ================= MY FAVORITES PAGE =================
 
-    content = tk.Frame(main_content, bg=BACKGROUND)
+    def show_my_favorites():
 
-    content.pack(
-        fill="both",
-        expand=True,
-        padx=35,
-        pady=25
-    )
+        nonlocal favorites_page
 
-    # ================= SCROLLABLE PAGE HELPER =================
+        close_other_pages()
 
-    def create_scrollable_page(parent):
+        favorites_page = tk.Frame(main_content, bg=BACKGROUND)
 
-        canvas = tk.Canvas(
-            parent,
+        favorites_page.pack(
+            fill="both",
+            expand=True,
+            padx=35,
+            pady=25
+        )
+
+        page_inner = create_scrollable_page(favorites_page)
+
+        tk.Label(
+            page_inner,
+            text="My Favorites",
+            font=("Arial", 23, "bold"),
             bg=BACKGROUND,
-            highlightthickness=0
-        )
+            fg=NAVY
+        ).pack(anchor="w", pady=(0, 5))
 
-        scrollbar = tk.Scrollbar(
-            parent,
-            orient="vertical",
-            command=canvas.yview
-        )
+        tk.Label(
+            page_inner,
+            text="View and manage the books you have added to your favorites.",
+            font=("Arial", 11),
+            bg=BACKGROUND,
+            fg=GRAY
+        ).pack(anchor="w", pady=(0, 25))
 
-        inner_frame = tk.Frame(canvas, bg=BACKGROUND)
+        favorite_books = get_student_favorites(user["User_ID"])
 
-        window_id = canvas.create_window(
-            (0, 0),
-            window=inner_frame,
-            anchor="nw"
-        )
+        if favorite_books:
 
-        canvas.configure(yscrollcommand=scrollbar.set)
+            tk.Label(
+                page_inner,
+                text=f"Your Favorite Books ({len(favorite_books)})",
+                font=("Arial", 17, "bold"),
+                bg=BACKGROUND,
+                fg=NAVY
+            ).pack(anchor="w", pady=(0, 15))
 
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+            for book in favorite_books:
 
-        def update_scroll(event=None):
+                card = create_book_card(
+                    page_inner,
+                    book,
+                    show_actions=False
+                )
 
-            canvas.configure(
-                scrollregion=canvas.bbox("all")
+                tk.Button(
+                    card,
+                    text="Remove from Favorites",
+                    font=("Arial", 9, "bold"),
+                    bg=LIGHT_TEAL,
+                    fg=NAVY,
+                    activebackground="#D5ECEA",
+                    activeforeground=NAVY,
+                    relief="flat",
+                    padx=16,
+                    pady=8,
+                    cursor="hand2",
+                    command=lambda b=book: handle_remove_favorite(b)
+                ).pack(anchor="w", pady=(15, 0))
+
+        else:
+
+            empty_frame = tk.Frame(
+                page_inner,
+                bg=WHITE,
+                highlightbackground=BORDER,
+                highlightthickness=1,
+                padx=25,
+                pady=35
             )
 
-        def update_width(event):
+            empty_frame.pack(fill="x", pady=10)
 
-            canvas.itemconfig(
-                window_id,
-                width=event.width
-            )
+            tk.Label(
+                empty_frame,
+                text="♡",
+                font=("Arial", 38),
+                bg=WHITE,
+                fg=TEAL
+            ).pack(pady=(0, 10))
 
-        inner_frame.bind("<Configure>", update_scroll)
-        canvas.bind("<Configure>", update_width)
+            tk.Label(
+                empty_frame,
+                text="Your Favorites List Is Empty",
+                font=("Arial", 15, "bold"),
+                bg=WHITE,
+                fg=NAVY
+            ).pack()
 
-        return inner_frame
+            tk.Label(
+                empty_frame,
+                text="Explore books and add them to your favorites.",
+                font=("Arial", 10),
+                bg=WHITE,
+                fg=GRAY
+            ).pack(pady=(8, 0))
 
-    # ================= BORROWING CARD HELPER =================
+    # ================= BORROWING CARD =================
 
     def create_borrowing_card(parent, book, returned=False):
 
@@ -954,219 +1109,13 @@ def open_student_dashboard(user):
                 command=lambda b=book: handle_return(b)
             ).pack(anchor="w", pady=(12, 0))
 
-    # ================= FAVORITE BOOK CARD =================
-
-    def create_favorite_card(parent, book):
-
-        card = tk.Frame(
-            parent,
-            bg=WHITE,
-            highlightbackground=BORDER,
-            highlightthickness=1,
-            padx=20,
-            pady=18
-        )
-
-        card.pack(fill="x", pady=7)
-
-        info_frame = tk.Frame(card, bg=WHITE)
-        info_frame.pack(fill="x")
-
-        tk.Label(
-            info_frame,
-            text="♡",
-            font=("Arial", 30),
-            bg=WHITE,
-            fg=TEAL
-        ).pack(side="left", padx=(0, 18))
-
-        details_frame = tk.Frame(info_frame, bg=WHITE)
-        details_frame.pack(side="left", fill="x", expand=True)
-
-        tk.Label(
-            details_frame,
-            text=book["Title"],
-            font=("Arial", 13, "bold"),
-            bg=WHITE,
-            fg=NAVY,
-            wraplength=650,
-            justify="left"
-        ).pack(anchor="w")
-
-        tk.Label(
-            details_frame,
-            text=f"Author: {book['Author']}",
-            font=("Arial", 10),
-            bg=WHITE,
-            fg=GRAY
-        ).pack(anchor="w", pady=(5, 3))
-
-        category = book.get("Category_Name") or "Not specified"
-
-        tk.Label(
-            details_frame,
-            text=f"Category: {category}",
-            font=("Arial", 9),
-            bg=WHITE,
-            fg=GRAY
-        ).pack(anchor="w")
-
-        description = book.get("Description") or "No description available."
-
-        tk.Label(
-            details_frame,
-            text=f"Description: {description}",
-            font=("Arial", 9),
-            bg=WHITE,
-            fg=TEXT,
-            wraplength=650,
-            justify="left"
-        ).pack(anchor="w", pady=(6, 3))
-
-        available = book.get("Available_Copies", 0)
-
-        if available > 0:
-            availability_text = f"Available Copies: {available}"
-            availability_color = TEAL
-        else:
-            availability_text = "Currently Unavailable"
-            availability_color = "#C0392B"
-
-        tk.Label(
-            details_frame,
-            text=availability_text,
-            font=("Arial", 9, "bold"),
-            bg=WHITE,
-            fg=availability_color
-        ).pack(anchor="w", pady=(5, 0))
-
-        tk.Button(
-            card,
-            text="Remove from Favorites",
-            font=("Arial", 9, "bold"),
-            bg=LIGHT_TEAL,
-            fg=NAVY,
-            activebackground="#D5ECEA",
-            activeforeground=NAVY,
-            relief="flat",
-            padx=16,
-            pady=8,
-            cursor="hand2",
-            command=lambda b=book: handle_remove_favorite(b)
-        ).pack(anchor="w", pady=(15, 0))
-
-    # ================= MY FAVORITES PAGE =================
-
-    def show_my_favorites():
-
-        nonlocal borrowings_page, return_page, favorites_page, waiting_page
-
-        suggestions_frame.place_forget()
-        content.pack_forget()
-
-        for page in (borrowings_page, return_page, waiting_page, favorites_page):
-            if page is not None:
-                page.destroy()
-
-        borrowings_page = None
-        return_page = None
-        waiting_page = None
-
-        favorites_page = tk.Frame(main_content, bg=BACKGROUND)
-
-        favorites_page.pack(
-            fill="both",
-            expand=True,
-            padx=35,
-            pady=25
-        )
-
-        page_inner = create_scrollable_page(favorites_page)
-
-        tk.Label(
-            page_inner,
-            text="My Favorites",
-            font=("Arial", 23, "bold"),
-            bg=BACKGROUND,
-            fg=NAVY
-        ).pack(anchor="w", pady=(0, 5))
-
-        tk.Label(
-            page_inner,
-            text="View and manage the books you have added to your favorites.",
-            font=("Arial", 11),
-            bg=BACKGROUND,
-            fg=GRAY
-        ).pack(anchor="w", pady=(0, 25))
-
-        favorite_books = get_student_favorites(user["User_ID"])
-
-        if favorite_books:
-
-            tk.Label(
-                page_inner,
-                text=f"Your Favorite Books ({len(favorite_books)})",
-                font=("Arial", 17, "bold"),
-                bg=BACKGROUND,
-                fg=NAVY
-            ).pack(anchor="w", pady=(0, 15))
-
-            for book in favorite_books:
-                create_favorite_card(page_inner, book)
-
-        else:
-
-            empty_frame = tk.Frame(
-                page_inner,
-                bg=WHITE,
-                highlightbackground=BORDER,
-                highlightthickness=1,
-                padx=25,
-                pady=35
-            )
-
-            empty_frame.pack(fill="x", pady=10)
-
-            tk.Label(
-                empty_frame,
-                text="♡",
-                font=("Arial", 38),
-                bg=WHITE,
-                fg=TEAL
-            ).pack(pady=(0, 10))
-
-            tk.Label(
-                empty_frame,
-                text="Your Favorites List Is Empty",
-                font=("Arial", 15, "bold"),
-                bg=WHITE,
-                fg=NAVY
-            ).pack()
-
-            tk.Label(
-                empty_frame,
-                text="Search for books and add them to your favorites.",
-                font=("Arial", 10),
-                bg=WHITE,
-                fg=GRAY
-            ).pack(pady=(8, 0))
-
     # ================= MY BORROWINGS PAGE =================
 
     def show_my_borrowings():
 
-        nonlocal borrowings_page, return_page, favorites_page, waiting_page
+        nonlocal borrowings_page
 
-        suggestions_frame.place_forget()
-        content.pack_forget()
-
-        for page in (return_page, favorites_page, waiting_page, borrowings_page):
-            if page is not None:
-                page.destroy()
-
-        return_page = None
-        favorites_page = None
-        waiting_page = None
+        close_other_pages()
 
         borrowings_page = tk.Frame(main_content, bg=BACKGROUND)
 
@@ -1218,7 +1167,11 @@ def open_student_dashboard(user):
         if current_borrowings:
 
             for book in current_borrowings:
-                create_borrowing_card(page_inner, book, returned=False)
+                create_borrowing_card(
+                    page_inner,
+                    book,
+                    returned=False
+                )
 
         else:
 
@@ -1243,7 +1196,11 @@ def open_student_dashboard(user):
         if previous_borrowings:
 
             for book in previous_borrowings:
-                create_borrowing_card(page_inner, book, returned=True)
+                create_borrowing_card(
+                    page_inner,
+                    book,
+                    returned=True
+                )
 
         else:
 
@@ -1261,18 +1218,9 @@ def open_student_dashboard(user):
 
     def show_return_books():
 
-        nonlocal borrowings_page, return_page, favorites_page, waiting_page
+        nonlocal return_page
 
-        suggestions_frame.place_forget()
-        content.pack_forget()
-
-        for page in (borrowings_page, favorites_page, waiting_page, return_page):
-            if page is not None:
-                page.destroy()
-
-        borrowings_page = None
-        favorites_page = None
-        waiting_page = None
+        close_other_pages()
 
         return_page = tk.Frame(main_content, bg=BACKGROUND)
 
@@ -1311,7 +1259,11 @@ def open_student_dashboard(user):
         if returned_books:
 
             for book in returned_books:
-                create_borrowing_card(page_inner, book, returned=True)
+                create_borrowing_card(
+                    page_inner,
+                    book,
+                    returned=True
+                )
 
         else:
 
@@ -1329,18 +1281,9 @@ def open_student_dashboard(user):
 
     def show_waiting_list():
 
-        nonlocal borrowings_page, return_page, favorites_page, waiting_page
+        nonlocal waiting_page
 
-        suggestions_frame.place_forget()
-        content.pack_forget()
-
-        for page in (borrowings_page, return_page, favorites_page, waiting_page):
-            if page is not None:
-                page.destroy()
-
-        borrowings_page = None
-        return_page = None
-        favorites_page = None
+        close_other_pages()
 
         waiting_page = tk.Frame(main_content, bg=BACKGROUND)
 
@@ -1402,7 +1345,7 @@ def open_student_dashboard(user):
 
             tk.Label(
                 empty_frame,
-                text="Search for unavailable books and join their waiting lists.",
+                text="Explore unavailable books and join their waiting lists.",
                 font=("Arial", 10),
                 bg=WHITE,
                 fg=GRAY
@@ -1523,22 +1466,524 @@ def open_student_dashboard(user):
                 command=lambda b=book: handle_leave_waiting(b)
             ).pack(anchor="w", pady=(10, 0))
 
+    # ================= YOU MAY LIKE PAGE =================
+
+    def show_you_may_like():
+
+        nonlocal you_may_like_page
+
+        close_other_pages()
+
+        you_may_like_page = tk.Frame(main_content, bg=BACKGROUND)
+
+        you_may_like_page.pack(
+            fill="both",
+            expand=True,
+            padx=35,
+            pady=25
+        )
+
+        page_inner = create_scrollable_page(you_may_like_page)
+
+        tk.Label(
+            page_inner,
+            text="You May Like",
+            font=("Arial", 23, "bold"),
+            bg=BACKGROUND,
+            fg=NAVY
+        ).pack(anchor="w", pady=(0, 5))
+
+        tk.Label(
+            page_inner,
+            text="Explore the five most borrowed books in MIDAD. "
+                 "These recommendations are based on borrowing records.",
+            font=("Arial", 11),
+            bg=BACKGROUND,
+            fg=GRAY,
+            wraplength=850,
+            justify="left"
+        ).pack(anchor="w", pady=(0, 25))
+
+        most_borrowed_books = get_most_borrowed_books()
+
+        if most_borrowed_books:
+
+            for index, book in enumerate(most_borrowed_books, start=1):
+
+                book_card = tk.Frame(
+                    page_inner,
+                    bg=WHITE,
+                    highlightbackground=BORDER,
+                    highlightthickness=1,
+                    padx=20,
+                    pady=18
+                )
+
+                book_card.pack(fill="x", pady=7)
+
+                info_frame = tk.Frame(book_card, bg=WHITE)
+                info_frame.pack(fill="x")
+
+                tk.Label(
+                    info_frame,
+                    text=f"{index}.",
+                    font=("Arial", 20, "bold"),
+                    bg=WHITE,
+                    fg=TEAL
+                ).pack(side="left", padx=(0, 18))
+
+                details_frame = tk.Frame(info_frame, bg=WHITE)
+                details_frame.pack(side="left", fill="x", expand=True)
+
+                tk.Label(
+                    details_frame,
+                    text=book["Title"],
+                    font=("Arial", 13, "bold"),
+                    bg=WHITE,
+                    fg=NAVY,
+                    wraplength=700,
+                    justify="left"
+                ).pack(anchor="w")
+
+                tk.Label(
+                    details_frame,
+                    text=f"Author: {book['Author']}",
+                    font=("Arial", 10),
+                    bg=WHITE,
+                    fg=GRAY
+                ).pack(anchor="w", pady=(5, 3))
+
+                tk.Label(
+                    details_frame,
+                    text=f"Borrowed {book['Borrowing_Count']} times",
+                    font=("Arial", 9, "bold"),
+                    bg=WHITE,
+                    fg=TEAL
+                ).pack(anchor="w", pady=(5, 0))
+
+        else:
+
+            empty_frame = tk.Frame(
+                page_inner,
+                bg=WHITE,
+                highlightbackground=BORDER,
+                highlightthickness=1,
+                padx=25,
+                pady=35
+            )
+
+            empty_frame.pack(fill="x", pady=10)
+
+            tk.Label(
+                empty_frame,
+                text="No Books to Recommend Yet",
+                font=("Arial", 15, "bold"),
+                bg=WHITE,
+                fg=NAVY
+            ).pack()
+
+            tk.Label(
+                empty_frame,
+                text="Books will appear here once borrowing records are available.",
+                font=("Arial", 10),
+                bg=WHITE,
+                fg=GRAY
+            ).pack(pady=(8, 0))
+
+    # ================= MYSTERY BORROW PAGE =================
+
+    def show_mystery_borrow():
+
+        nonlocal mystery_page
+
+        close_other_pages()
+
+        mystery_page = tk.Frame(main_content, bg=BACKGROUND)
+
+        mystery_page.pack(
+            fill="both",
+            expand=True,
+            padx=35,
+            pady=25
+        )
+
+        page_inner = create_scrollable_page(mystery_page)
+
+        tk.Label(
+            page_inner,
+            text="Mystery Borrow",
+            font=("Arial", 23, "bold"),
+            bg=BACKGROUND,
+            fg=NAVY
+        ).pack(anchor="w", pady=(0, 5))
+
+        tk.Label(
+            page_inner,
+            text="Choose a category and discover a random book!",
+            font=("Arial", 11),
+            bg=BACKGROUND,
+            fg=GRAY
+        ).pack(anchor="w", pady=(0, 25))
+
+        category_frame = tk.Frame(
+            page_inner,
+            bg=WHITE,
+            highlightbackground=BORDER,
+            highlightthickness=1,
+            padx=25,
+            pady=22
+        )
+
+        category_frame.pack(fill="x", pady=(0, 20))
+
+        tk.Label(
+            category_frame,
+            text="Choose a Book Category",
+            font=("Arial", 14, "bold"),
+            bg=WHITE,
+            fg=NAVY
+        ).pack(anchor="w", pady=(0, 12))
+
+        categories = get_book_categories()
+
+        if not categories:
+
+            tk.Label(
+                category_frame,
+                text="No categories are currently available.",
+                font=("Arial", 10),
+                bg=WHITE,
+                fg=GRAY
+            ).pack(anchor="w")
+
+            return
+
+        category_map = {
+            category["Category_Name"]: category["Category_ID"]
+            for category in categories
+        }
+
+        selected_category = tk.StringVar()
+
+        category_dropdown = ttk.Combobox(
+            category_frame,
+            textvariable=selected_category,
+            values=list(category_map.keys()),
+            state="readonly",
+            font=("Arial", 10),
+            width=38
+        )
+
+        category_dropdown.pack(anchor="w", pady=(0, 18))
+
+        result_frame = tk.Frame(page_inner, bg=BACKGROUND)
+        result_frame.pack(fill="x")
+
+        def reveal_random_book():
+
+            category_name = selected_category.get()
+
+            if not category_name:
+
+                messagebox.showwarning(
+                    "Select Category",
+                    "Please select a category first."
+                )
+
+                return
+
+            book = get_random_book_by_category(
+                category_map[category_name]
+            )
+
+            for widget in result_frame.winfo_children():
+                widget.destroy()
+
+            if book is None:
+
+                messagebox.showinfo(
+                    "No Books Available",
+                    "There are no available books in this category. "
+                    "Please choose another category."
+                )
+
+                return
+
+            book_card = tk.Frame(
+                result_frame,
+                bg=WHITE,
+                highlightbackground=BORDER,
+                highlightthickness=1,
+                padx=25,
+                pady=22
+            )
+
+            book_card.pack(fill="x", pady=5)
+
+            tk.Label(
+                book_card,
+                text="Your Mystery Book",
+                font=("Arial", 17, "bold"),
+                bg=WHITE,
+                fg=TEAL
+            ).pack(anchor="w", pady=(0, 15))
+
+            tk.Label(
+                book_card,
+                text=book["Title"],
+                font=("Arial", 15, "bold"),
+                bg=WHITE,
+                fg=NAVY,
+                wraplength=700,
+                justify="left"
+            ).pack(anchor="w", pady=(0, 7))
+
+            tk.Label(
+                book_card,
+                text=f"Author: {book['Author']}",
+                font=("Arial", 10),
+                bg=WHITE,
+                fg=GRAY
+            ).pack(anchor="w", pady=3)
+
+            tk.Label(
+                book_card,
+                text=f"Category: {book['Category_Name']}",
+                font=("Arial", 10),
+                bg=WHITE,
+                fg=GRAY
+            ).pack(anchor="w", pady=3)
+
+            description = (
+                book.get("Description")
+                or "No description available."
+            )
+
+            tk.Label(
+                book_card,
+                text=description,
+                font=("Arial", 10),
+                bg=WHITE,
+                fg=TEXT,
+                wraplength=750,
+                justify="left"
+            ).pack(anchor="w", pady=(10, 8))
+
+            tk.Label(
+                book_card,
+                text=f"Available Copies: {book['Available_Copies']}",
+                font=("Arial", 9, "bold"),
+                bg=WHITE,
+                fg=TEAL
+            ).pack(anchor="w", pady=(3, 12))
+
+            tk.Button(
+                book_card,
+                text="Borrow This Book",
+                font=("Arial", 10, "bold"),
+                bg=TEAL,
+                fg=WHITE,
+                activebackground="#24736F",
+                activeforeground=WHITE,
+                relief="flat",
+                padx=20,
+                pady=9,
+                cursor="hand2",
+                command=lambda selected_book=book: handle_borrow(
+                    selected_book
+                )
+            ).pack(anchor="w")
+
+        tk.Button(
+            category_frame,
+            text="Reveal My Mystery Book",
+            font=("Arial", 10, "bold"),
+            bg=TEAL,
+            fg=WHITE,
+            activebackground="#24736F",
+            activeforeground=WHITE,
+            relief="flat",
+            padx=20,
+            pady=10,
+            cursor="hand2",
+            command=reveal_random_book
+        ).pack(anchor="w")
+
+    # ================= EXPLORE BOOKS PAGE =================
+
+    def show_explore_books():
+
+        nonlocal explore_page
+
+        close_other_pages()
+
+        explore_page = tk.Frame(main_content, bg=BACKGROUND)
+
+        explore_page.pack(
+            fill="both",
+            expand=True,
+            padx=35,
+            pady=25
+        )
+
+        page_inner = create_scrollable_page(explore_page)
+
+        # Page heading.
+        tk.Label(
+            page_inner,
+            text="Explore Books",
+            font=("Arial", 23, "bold"),
+            bg=BACKGROUND,
+            fg=NAVY
+        ).pack(anchor="w", pady=(0, 5))
+
+        tk.Label(
+            page_inner,
+            text="Discover and explore all the books available in MIDAD.",
+            font=("Arial", 11),
+            bg=BACKGROUND,
+            fg=GRAY
+        ).pack(anchor="w", pady=(0, 20))
+
+        # Search inside Explore Books.
+        filter_frame = tk.Frame(
+            page_inner,
+            bg=WHITE,
+            highlightbackground=BORDER,
+            highlightthickness=1,
+            padx=12,
+            pady=10
+        )
+
+        filter_frame.pack(fill="x", pady=(0, 20))
+
+        explore_search = tk.Entry(
+            filter_frame,
+            font=("Arial", 11),
+            bg=WHITE,
+            fg=TEXT,
+            relief="flat"
+        )
+
+        explore_search.pack(
+            side="left",
+            fill="x",
+            expand=True,
+            padx=8,
+            pady=5
+        )
+
+        explore_search.insert(0, "Search books by title or author")
+
+        def explore_focus_in(event):
+
+            if explore_search.get() == "Search books by title or author":
+                explore_search.delete(0, "end")
+                explore_search.config(fg=TEXT)
+
+        def explore_focus_out(event):
+
+            if not explore_search.get().strip():
+                explore_search.insert(
+                    0,
+                    "Search books by title or author"
+                )
+                explore_search.config(fg=GRAY)
+
+        explore_search.config(fg=GRAY)
+
+        explore_search.bind("<FocusIn>", explore_focus_in)
+        explore_search.bind("<FocusOut>", explore_focus_out)
+
+        books_count_label = tk.Label(
+            page_inner,
+            text="",
+            font=("Arial", 16, "bold"),
+            bg=BACKGROUND,
+            fg=NAVY
+        )
+
+        books_count_label.pack(anchor="w", pady=(0, 15))
+
+        books_container = tk.Frame(page_inner, bg=BACKGROUND)
+        books_container.pack(fill="x")
+
+        def display_explore_books(books):
+
+            for widget in books_container.winfo_children():
+                widget.destroy()
+
+            books_count_label.config(
+                text=f"Library Collection ({len(books)} Books)"
+            )
+
+            if not books:
+
+                empty_frame = tk.Frame(
+                    books_container,
+                    bg=WHITE,
+                    highlightbackground=BORDER,
+                    highlightthickness=1,
+                    padx=25,
+                    pady=35
+                )
+
+                empty_frame.pack(fill="x", pady=10)
+
+                tk.Label(
+                    empty_frame,
+                    text="No Books Found",
+                    font=("Arial", 15, "bold"),
+                    bg=WHITE,
+                    fg=NAVY
+                ).pack()
+
+                tk.Label(
+                    empty_frame,
+                    text="Try searching with another title or author.",
+                    font=("Arial", 10),
+                    bg=WHITE,
+                    fg=GRAY
+                ).pack(pady=(8, 0))
+
+                return
+
+            for book in books:
+                create_book_card(books_container, book)
+
+        # Load all books from database.
+        all_books = get_all_books()
+
+        display_explore_books(all_books)
+
+        def filter_explore_books(event=None):
+
+            search_text = explore_search.get().strip()
+
+            if search_text == "Search books by title or author":
+                search_text = ""
+
+            if not search_text:
+
+                display_explore_books(all_books)
+
+                return
+
+            filtered_books = [
+                book for book in all_books
+                if search_text.lower() in book["Title"].lower()
+                or search_text.lower() in book["Author"].lower()
+            ]
+
+            display_explore_books(filtered_books)
+
+        explore_search.bind("<KeyRelease>", filter_explore_books)
+
     # ================= SHOW DASHBOARD =================
 
     def show_dashboard():
 
-        nonlocal borrowings_page, return_page, favorites_page, waiting_page
-
-        suggestions_frame.place_forget()
-
-        for page in (borrowings_page, return_page, favorites_page, waiting_page):
-            if page is not None:
-                page.destroy()
-
-        borrowings_page = None
-        return_page = None
-        favorites_page = None
-        waiting_page = None
+        close_other_pages()
 
         content.pack(
             fill="both",
@@ -1566,10 +2011,26 @@ def open_student_dashboard(user):
         elif page_name == "Dashboard":
             show_dashboard()
 
-        else:
-            show_message(page_name)
+        elif page_name == "You May Like":
+            show_you_may_like()
 
-    # ================= SIDEBAR NAVIGATION BUTTONS =================
+        elif page_name == "Mystery Borrow":
+            show_mystery_borrow()
+
+        elif page_name == "Explore Books":
+            show_explore_books()
+
+    # ================= SIDEBAR NAVIGATION =================
+
+    navigation = [
+        ("⌂", "Dashboard"),
+        ("▤", "My Borrowings"),
+        ("↩", "Return Books"),
+        ("☷", "Waiting List"),
+        ("♡", "My Favorites"),
+        ("✦", "You May Like"),
+        ("?", "Mystery Borrow")
+    ]
 
     for icon, name in navigation:
 
@@ -1620,6 +2081,7 @@ def open_student_dashboard(user):
     # ================= BANNER =================
 
     banner = tk.Frame(content, bg=NAVY, height=190)
+
     banner.pack(fill="x", pady=(0, 30))
     banner.pack_propagate(False)
 
@@ -1651,7 +2113,7 @@ def open_student_dashboard(user):
         padx=22,
         pady=10,
         cursor="hand2",
-        command=lambda: show_message("Explore Books")
+        command=show_explore_books
     ).pack(anchor="w", padx=30, pady=15)
 
     # ================= YOU MAY LIKE =================
